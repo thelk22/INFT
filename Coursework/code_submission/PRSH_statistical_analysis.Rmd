@@ -1,0 +1,410 @@
+---
+title: "Fintech Coursework"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## EDA for k experiments
+
+```{r}
+library(tidyverse)
+
+col_names <- c("k","time","highest_bid","lowest_offer","t1_t","t1_prof","t1_n","t1_av_prof","t2_t","t2_prof","t2_n","t2_av_prof","na1","na2","na3")
+
+# Function to read in the results of experiment k
+get_kth_experiment <- function(k) {
+  path <- paste("k_data/k_",k,"/",sep="")
+  k_exp <- data.frame()
+  n <- 100
+  for (trial in seq(0,n-1)) {
+    file <- paste(k,"_",trial,"_avg_balance.csv",sep="")
+    full_file_path <- paste(path,file,sep="")
+    trial <- read_csv(full_file_path,col_names=col_names,show_col_types = FALSE) %>%
+      select(-c("na1","na2","na3")) %>%
+      mutate(time=as.numeric(time)) %>%
+      mutate(k=as.numeric(str_split(k,"_")[[1]][[1]]))
+    k_exp <- bind_rows(k_exp,trial)
+  }
+  return(k_exp)
+}
+
+# Function to mutate the df with the average profit per trading day for the kth experiment
+# Note: trading day of length 10, and time column is the total time for that experiment
+calc_av_prof_per_day <- function(k_exp) {
+  return(k_exp %>%
+           mutate(t1_av_prof_per_day=t1_av_prof/(time/10)) %>%
+           mutate(t2_av_prof_per_day=t2_av_prof/(time/10)))
+}
+
+# Select the columns of interest
+select_relevant_columns <- function(k_exp) {
+  return(k_exp %>%
+           select(k,time,
+                  t1_t,t1_av_prof_per_day,
+                  t2_t,t2_av_prof_per_day))
+}
+
+# Read the results of each experiment into a data frame
+k2_exp <- select_relevant_columns(calc_av_prof_per_day(get_kth_experiment(2)))
+k3_exp <- select_relevant_columns(calc_av_prof_per_day(get_kth_experiment(3)))
+k4_exp <- select_relevant_columns(calc_av_prof_per_day(get_kth_experiment(4)))
+k5_exp <- select_relevant_columns(calc_av_prof_per_day(get_kth_experiment(5)))
+k6_exp <- select_relevant_columns(calc_av_prof_per_day(get_kth_experiment(6)))
+k7_exp <- select_relevant_columns(calc_av_prof_per_day(get_kth_experiment(7)))
+k8_exp <- select_relevant_columns(calc_av_prof_per_day(get_kth_experiment(8)))
+k9_exp <- select_relevant_columns(calc_av_prof_per_day(get_kth_experiment(9)))
+
+# Create new df with av prof per trading day from all experiments
+# These are the samples to be tested
+k_prsh_av_prof_per_day_df <- data.frame(
+  k2_av_prof_per_day = k2_exp$t1_av_prof_per_day,
+  k3_av_prof_per_day = k3_exp$t1_av_prof_per_day,
+  k4_av_prof_per_day = k4_exp$t1_av_prof_per_day,
+  k5_av_prof_per_day = k5_exp$t1_av_prof_per_day,
+  k6_av_prof_per_day = k6_exp$t1_av_prof_per_day,
+  k7_av_prof_per_day = k7_exp$t1_av_prof_per_day,
+  k8_av_prof_per_day = k8_exp$t1_av_prof_per_day,
+  k9_av_prof_per_day = k9_exp$t1_av_prof_per_day
+)
+
+# Some exploratory data analysis
+k_mean_profit_per_trading_day <- k_prsh_av_prof_per_day_df %>%
+  summarise(across(everything(),mean)) %>%
+  pivot_longer(cols=c(1:8),values_to="PRSH") %>%
+  mutate(k=seq(2,9)) %>%
+  select(k,PRSH)
+
+ggplot(k_mean_profit_per_trading_day, aes(x=k,y=PRSH)) +
+  geom_line(color="red") +
+  scale_x_continuous(breaks=seq(9)) +
+  labs(title="Average profit per trading day for different values of k",y="Average profit per trading day") +
+  theme_bw()
+
+# Add k to plot
+k_zip_av_prof_per_day_df <- data.frame(
+  k2_av_prof_per_day = k2_exp$t2_av_prof_per_day,
+  k3_av_prof_per_day = k3_exp$t2_av_prof_per_day,
+  k4_av_prof_per_day = k4_exp$t2_av_prof_per_day,
+  k5_av_prof_per_day = k5_exp$t2_av_prof_per_day,
+  k6_av_prof_per_day = k6_exp$t2_av_prof_per_day,
+  k7_av_prof_per_day = k7_exp$t2_av_prof_per_day,
+  k8_av_prof_per_day = k8_exp$t2_av_prof_per_day,
+  k9_av_prof_per_day = k9_exp$t2_av_prof_per_day
+)
+k_mean_profit_per_trading_day <- k_mean_profit_per_trading_day %>%
+  mutate("ZIP"=(k_zip_av_prof_per_day_df %>%
+                  summarise(across(everything(),mean)) %>%
+                  pivot_longer(cols=c(1:8),values_to="ZIP") %>%
+                  mutate(k=seq(2,9)) %>%
+                  pull(ZIP)
+                )
+         )
+zip_prsh_plotting_df <- k_mean_profit_per_trading_day %>%
+  pivot_longer(cols=c(PRSH,ZIP),names_to="trader",values_to="prof_per_day")
+
+# Plot PRSH performance against ZIP
+ggplot(zip_prsh_plotting_df, aes(x=k,y=prof_per_day)) +
+  geom_line(aes(color=trader)) +
+  scale_x_continuous(breaks=seq(9)) +
+  labs(title="Average profit per trading day for different values of k",y="Average profit per trading day") +
+  theme_bw()
+  
+
+```
+
+# Running hypothesis tests on the k data
+
+```{r}
+# load library required for SIGN.test function
+library(BSDA)
+# Set the significance level using Bonferroni's method
+alpha <- 0.05
+
+# Create data frame of the differences between each experiment and k=4
+# These are the input for the t-test or sign-test
+k_differences_df <- k_prsh_av_prof_per_day_df %>%
+  mutate(diff_2_4=k2_av_prof_per_day-k4_av_prof_per_day,
+         diff_3_4=k3_av_prof_per_day-k4_av_prof_per_day,
+         diff_5_4=k5_av_prof_per_day-k4_av_prof_per_day,
+         diff_6_4=k6_av_prof_per_day-k4_av_prof_per_day,
+         diff_7_4=k7_av_prof_per_day-k4_av_prof_per_day,
+         diff_8_4=k8_av_prof_per_day-k4_av_prof_per_day,
+         diff_9_4=k9_av_prof_per_day-k4_av_prof_per_day) %>%
+  select(9:15)
+
+# Are they normally distributed?
+plot_k_differences_df <- k_differences_df %>%
+  pivot_longer(cols=everything(), names_to="Pairing", values_to="mean_difference")
+# Density plot
+ggplot(plot_k_differences_df, aes(x=mean_difference, group=Pairing, color=Pairing)) +
+  geom_density() +
+  labs(title="Density of differences",x="Mean difference",y="Density") +
+  theme_bw()
+# QQ plot
+qq_plot_df <- plot_k_differences_df %>%
+  filter(Pairing=="diff_8_4" | Pairing=="diff_9_4")
+ggplot(qq_plot_df, aes(sample=mean_difference,color=Pairing)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title="Quantile-quantile plot of differences",x="",y="") +
+  theme_bw()
+
+# Not particularly convincing, but not too bad either...
+# Proceed with the test
+
+# Function to run one-sided sign test with significance level alpha
+run_one_sample_t_test_k <- function(diff_column,alpha) {
+  result <- t.test(x=k_differences_df %>% pull(diff_column),
+                   alternative="greater",
+                   mu=0,
+                   conf.level=alpha)
+  return(result)
+}
+
+k_t_test_results <- data.frame(Y=c("diff_2_4","diff_3_4","diff_5_4","diff_6_4","diff_7_4","diff_8_4","diff_9_4")) %>%
+  # run sign-test for each difference vector Y
+  mutate(result=map(.x=Y,.f=~run_one_sample_t_test_k(.x,alpha))) %>%
+  # retreive p-value
+  mutate(p=map_dbl(.x=result,.f=~.x$p.value)) %>%
+  # retrieve test statistic s
+  mutate(t=map_dbl(.x=result,.f=~.x$statistic)) %>%
+  # determine whether to reject the null hypothesis
+  mutate(reject_null=p<alpha)
+
+k_t_test_results %>%
+  select(-result)
+
+# Accept the null in every instance...
+# Closest p-value of 0.22 for k=8, still not a very significant result
+# Profit is indeed higher for k=8, but there's so much volatility it's difficult to come to a conclusion
+# Maybe better to use an alternative test...
+
+# Function to run one-sided sign test with significance level alpha
+run_one_sample_sign_test_k <- function(diff_column,alpha) {
+  result <- SIGN.test(x=k_differences_df %>% pull(diff_column),
+                   alternative="less",
+                   md=0,
+                   conf.level=alpha)
+  return(result)
+}
+
+k_sign_test_results <- data.frame(Y=c("diff_2_4","diff_3_4","diff_5_4","diff_6_4","diff_7_4","diff_8_4","diff_9_4")) %>%
+  # run sign-test for each difference vector Y
+  mutate(result=map(.x=Y,.f=~run_one_sample_sign_test_k(.x,alpha))) %>%
+  # retreive p-value
+  mutate(p=map_dbl(.x=result,.f=~.x$p.value)) %>%
+  # retrieve test statistic s
+  mutate(s=map_dbl(.x=result,.f=~.x$statistic)) %>%
+  # determine whether to reject the null hypothesis
+  mutate(reject_null=p<alpha)
+
+k_sign_test_results %>%
+  select(-result)
+
+# Accept the null in every instance again
+# Closest p-value of 0.62 for k=7, not significant at all
+
+# Conclusion: none are better than the default value of 4
+
+
+# So why do the t-test and sign-test give such different p-values?
+# To answer this, need to look at the means and medians
+# Remember, t-test is a test of sample mean, sign-test is a test of sample median
+
+# Let's have a look at the mean and median and try and understand why the tests give such different p-values
+k_central_tendency_df <- data.frame(Y=c("diff_2_4","diff_3_4","diff_5_4","diff_6_4","diff_7_4","diff_8_4","diff_9_4")) %>%
+  mutate(mean=map_dbl(.x=Y,.f=~mean(k_differences_df %>% pull(.x)))) %>%
+  mutate(median=map_dbl(.x=Y,.f=~median(k_differences_df %>% pull(.x))))
+
+# Plot graph of the means of the difference sets
+ggplot(k_central_tendency_df, aes(x=Y,y=mean)) +
+  geom_bar(stat="identity") +
+  scale_x_discrete(labels=c("2","3","5","6","7","8","9")) +
+  labs(title="Difference in profit between trials",x="k",y="Mean difference from trial with k=4") +
+  theme_bw()
+
+# Plot graph of the medians of the difference sets
+ggplot(k_central_tendency_df, aes(x=Y,y=median)) +
+  geom_bar(stat="identity") +
+  scale_x_discrete(labels=c("2","3","5","6","7","8","9")) +
+  labs(title="Median difference in profit between trials",x="k",y="Median difference from trial with k=4") +
+  theme_bw()
+
+
+```
+
+
+## EDA for the mutation function experiments
+
+```{r}
+# Note: some of the code here is very similar to the code for k
+# We can do this since we named the files for each experiment similarly, 
+# and will be using the sign test for both experiments
+
+# m Description
+# 1 Draw all values from the distribution U(s − 0.05 , s + 0.05)                   DEFAULT
+# 2 Draw from the distribution N(s, 0.05)                                          DISCRETE
+# 3 Randomly draw all values from the set {−1, −0.5, 0, 0.5, 1}                    RANDOM
+# 4 Draw all values from the distribution U(−1, 1)                                 UNIFORM
+# 5 Draw 2 values from either side of s                                            SPREAD
+# 6 Draw 2 values from either side of s, with 1 distant and 1 near on each side    WIDE SPREAD
+
+library(tidyverse)
+
+col_names <- c("k","time","highest_bid","lowest_offer","t1_t","t1_prof","t1_n","t1_av_prof","t2_t","t2_prof","t2_n","t2_av_prof","na1","na2","na3")
+
+# Function to read in the results of experiment m
+get_mth_experiment <- function(m) {
+  path <- paste("m_data/m_",m,"/",sep="")
+  m_exp <- data.frame()
+  n <- 100
+  for (trial in seq(0,n-1)) {
+    file <- paste(m,"_",trial,"_avg_balance.csv",sep="")
+    full_file_path <- paste(path,file,sep="")
+    trial <- read_csv(full_file_path,col_names=col_names,show_col_types = FALSE) %>%
+      select(-c("na1","na2","na3")) %>%
+      mutate(time=as.numeric(time)) %>%
+      mutate(m=as.numeric(str_split(m,"_")[[1]][[1]]))
+    m_exp <- bind_rows(m_exp,trial)
+  }
+  return(m_exp)
+}
+
+calc_av_prof_per_day <- function(m_exp) {
+  return(m_exp %>%
+           mutate(t1_av_prof_per_day=t1_av_prof/(time/20)) %>%
+           mutate(t2_av_prof_per_day=t2_av_prof/(time/20)))
+}
+
+select_relevant_columns <- function(m_exp) {
+  return(m_exp %>%
+           select(k,time,
+                  t1_t,t1_av_prof_per_day,
+                  t2_t,t2_av_prof_per_day))
+}
+
+# Note: generated this data and then switched around the numbering system for my mutation functions, hence the weird ordering
+m2_exp <- select_relevant_columns(calc_av_prof_per_day(get_mth_experiment(1)))
+m3_exp <- select_relevant_columns(calc_av_prof_per_day(get_mth_experiment(2)))
+m4_exp <- select_relevant_columns(calc_av_prof_per_day(get_mth_experiment(3)))
+m1_exp <- select_relevant_columns(calc_av_prof_per_day(get_mth_experiment(4)))
+m5_exp <- select_relevant_columns(calc_av_prof_per_day(get_mth_experiment(5)))
+m6_exp <- select_relevant_columns(calc_av_prof_per_day(get_mth_experiment(6)))
+
+m_prsh_av_prof_per_day_df <- data.frame(
+  m1_av_prof_per_day = m1_exp$t1_av_prof_per_day,
+  m2_av_prof_per_day = m2_exp$t1_av_prof_per_day,
+  m3_av_prof_per_day = m3_exp$t1_av_prof_per_day,
+  m4_av_prof_per_day = m4_exp$t1_av_prof_per_day,
+  m5_av_prof_per_day = m5_exp$t1_av_prof_per_day,
+  m6_av_prof_per_day = m6_exp$t1_av_prof_per_day)
+
+m_zip_av_prof_per_day_df <- data.frame(
+  m1_av_prof_per_day = m1_exp$t2_av_prof_per_day,
+  m2_av_prof_per_day = m2_exp$t2_av_prof_per_day,
+  m3_av_prof_per_day = m3_exp$t2_av_prof_per_day,
+  m4_av_prof_per_day = m4_exp$t2_av_prof_per_day,
+  m5_av_prof_per_day = m5_exp$t2_av_prof_per_day,
+  m6_av_prof_per_day = m6_exp$t2_av_prof_per_day)
+
+# Some exploratory data analysis
+m_mean_profit_per_trading_day <- m_prsh_av_prof_per_day_df %>%
+  summarise(across(everything(),mean)) %>%
+  pivot_longer(cols=c(1:6),values_to="PRSH") %>%
+  mutate(m=seq(6)) %>%
+  select(m,PRSH)
+
+ggplot(m_mean_profit_per_trading_day, aes(x=m,y=PRSH)) +
+  geom_line(color="red") +
+  scale_x_continuous(breaks=seq(6)) +
+  labs(title="Average profit per trading day for different mutation functions",y="Average profit per trading day") +
+  theme_bw()
+
+m_mean_profit_per_trading_day <- m_prsh_av_prof_per_day_df %>%
+  summarise(across(everything(),mean)) 
+
+```
+
+# Running hypothesis tests for the mutation experiment
+
+```{r}
+# load library required for SIGN.test function
+library(BSDA)
+
+# Generate the difference vectors
+m_differences_df <- m_av_prof_per_day_df %>%
+  mutate(diff_2_1=m2_av_prof_per_day-m1_av_prof_per_day,
+         diff_3_1=m3_av_prof_per_day-m1_av_prof_per_day,
+         diff_4_1=m4_av_prof_per_day-m1_av_prof_per_day,
+         diff_5_1=m5_av_prof_per_day-m1_av_prof_per_day,
+         diff_6_1=m6_av_prof_per_day-m1_av_prof_per_day) %>%
+  select(7:11)
+
+# Are they normally distributed?
+plot_m_differences_df <- m_differences_df %>%
+  pivot_longer(cols=everything(), names_to="Pairing", values_to="mean_difference")
+# Display density plot of differences
+ggplot(plot_m_differences_df, aes(x=mean_difference, group=Pairing, color=Pairing)) +
+  geom_density() +
+  labs(title="Distribution of profit difference from m=1",x="Mean difference",y="Density") +
+  theme_bw()
+
+m_mean_differences <- m_differences_df %>%
+  summarise(across(everything(),mean))
+
+# Set the significance level using Bonferroni's method
+alpha <- 0.05
+
+# Function to run two-sided sign test with significance level alpha
+run_one_sample_sign_test <- function(diff_column,alpha) {
+  result <- SIGN.test(x=m_differences_df %>% pull(diff_column),
+                   alternative="greater",
+                   md=0,
+                   conf.level=alpha)
+  return(result)
+}
+
+m_sign_test_results <- data.frame(Y=c("diff_2_1","diff_3_1","diff_4_1","diff_5_1","diff_6_1")) %>%
+  # run sign-test for each difference vector Y
+  mutate(result=map(.x=Y,.f=~run_one_sample_sign_test(.x,alpha))) %>%
+  # retreive p-value
+  mutate(p=map_dbl(.x=result,.f=~.x$p.value)) %>%
+  # retrieve test statistic s
+  mutate(s=map_dbl(.x=result,.f=~.x$statistic)) %>%
+  # determine whether to reject the null hypothesis
+  mutate(reject_null=p<alpha)
+
+m_sign_test_results %>%
+  select(-result)
+
+
+
+## Perform t-test (just out of interest of seeing the results)
+
+# Function to run two-sided sign test with significance level alpha
+run_one_sample_t_test <- function(diff_column,alpha) {
+  result <- t.test(x=m_differences_df %>% pull(diff_column),
+                   alternative="greater",
+                   md=0,
+                   conf.level=alpha)
+  return(result)
+}
+
+m_t_test_results <- data.frame(Y=c("diff_2_1","diff_3_1","diff_4_1","diff_5_1","diff_6_1")) %>%
+  # run sign-test for each difference vector Y
+  mutate(result=map(.x=Y,.f=~run_one_sample_t_test(.x,alpha))) %>%
+  # retreive p-value
+  mutate(p=map_dbl(.x=result,.f=~.x$p.value)) %>%
+  # retrieve test statistic s
+  mutate(t=map_dbl(.x=result,.f=~.x$statistic)) %>%
+  # determine whether to reject the null hypothesis
+  mutate(reject_null=p<alpha)
+
+m_t_test_results %>%
+  select(-result)
+
+
+```
